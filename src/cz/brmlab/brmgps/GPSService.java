@@ -23,6 +23,7 @@ import android.os.PowerManager;
 import android.util.Log;
 import android.widget.Toast;
 
+@SuppressWarnings("deprecation")
 public class GPSService extends Service {
 	private static final String TAG = "brmGPSService";
 	private ScheduledExecutorService scheduler;
@@ -83,7 +84,7 @@ public class GPSService extends Service {
 	
 	@Override
 	public void onCreate() {
-		Toast.makeText(this, "GPS Service Created", Toast.LENGTH_LONG).show();
+		// Toast.makeText(this, "GPS Service Created", Toast.LENGTH_LONG).show(); ###################################
 		Log.d(TAG, "onCreate");
 		
         sensorMgr = (SensorManager)getSystemService(Context.SENSOR_SERVICE);
@@ -120,7 +121,7 @@ public class GPSService extends Service {
 
 	@Override
 	public void onDestroy() {
-		Toast.makeText(this, "GPS Service Stopped", Toast.LENGTH_LONG).show();
+		//Toast.makeText(this, "GPS Service Stopped", Toast.LENGTH_LONG).show(); ###################################
 		Log.d(TAG, "onDestroy");
 		shouldRun = false;
 		listenerThread.interrupt();
@@ -165,14 +166,14 @@ public class GPSService extends Service {
 			}
 
 			sensorMgr.registerListener(mListener, SensorManager.SENSOR_ORIENTATION, SensorManager.SENSOR_DELAY_GAME);
-			locationMgr.requestLocationUpdates(LocationManager.GPS_PROVIDER, 1l, 1l, lListener);
-			
+			locationMgr.requestLocationUpdates(LocationManager.GPS_PROVIDER , 1l, 1l, lListener); // GPS_PROVIDER
+			locationMgr.requestLocationUpdates(LocationManager.NETWORK_PROVIDER , 1l, 1l, lListener); // NETWORK_PROVIDER
 			powerMgr = (PowerManager) getSystemService(Context.POWER_SERVICE);
 			wl = powerMgr.newWakeLock(PowerManager.FULL_WAKE_LOCK, "brmGPS");
 			wl.acquire();
 			try {
 				serverSocket = new ServerSocket(5000);
-				Toast.makeText(this, "GPS Service Started " + serverSocket.getLocalSocketAddress(), Toast.LENGTH_LONG).show();
+				//Toast.makeText(this, "GPS Service Started " + serverSocket.getLocalSocketAddress(), Toast.LENGTH_LONG).show(); ###################################
 			} catch (IOException e1) {
 				e1.printStackTrace();
 			}
@@ -185,7 +186,7 @@ public class GPSService extends Service {
 							String line ="";
 							OutputStream os = clientSocket.getOutputStream();
 							if (mValues != null) {
-								line +="COMPAS:" + mValues[0] +"|";
+								line +="<compass>" + mValues[0] +"</compass><pitch>"+mValues[1]+"</pitch><roll>"+mValues[2]+"</roll>";
 							}
 
 							if (lastKnownLocation != null) {
@@ -194,7 +195,8 @@ public class GPSService extends Service {
 								double alt = lastKnownLocation.getAltitude();
 								float speed = lastKnownLocation.getSpeed();
 								float acc = lastKnownLocation.getAccuracy();
-								line+="GPS:" + lat + "|" + lon + "|" + alt + "|" + speed + "|" + acc;    
+								long sats = lastKnownLocation.getExtras().getLong("satellites");
+								line+="<lat>" + lat + "</lat><lon>" + lon + "</lon><alt>" + alt + "</alt><speed>" + speed + "</speed><acc>" + acc + "</acc><sats>"+sats+"</sats>";    
 							}else{
 								line+="GPS:MISSINGINFO";
 							}
