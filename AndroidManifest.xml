@@ -10,7 +10,7 @@
     </activity>
     <service android:enabled="true" android:name=".GPSService" />
   </application>
-  <uses-sdk android:minSdkVersion="8" />
+  <uses-sdk android:minSdkVersion="4"/>
   
   <uses-permission android:name="android.permission.INTERNET" /> 
   
@@ -21,4 +21,5 @@
 	<uses-permission android:name="android.permission.CONTROL_LOCATION_UPDATES"></uses-permission>
   <uses-permission android:name="android.permission.WAKE_LOCK"/>
   
+<uses-permission android:name="android.permission.TELEPHONY_SERVICE"></uses-permission>
 </manifest> 

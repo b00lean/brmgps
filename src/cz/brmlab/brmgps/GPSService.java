@@ -20,6 +20,9 @@ import android.location.LocationManager;
 import android.os.Bundle;
 import android.os.IBinder;
 import android.os.PowerManager;
+import android.telephony.TelephonyManager;
+import android.telephony.cdma.CdmaCellLocation;
+import android.telephony.gsm.GsmCellLocation;
 import android.util.Log;
 import android.widget.Toast;
 
@@ -99,7 +102,7 @@ public class GPSService extends Service {
 					do {
 						Socket s = serverSocket.accept();
 						OutputStream o = s.getOutputStream();
-						o.write("brmgps\n".getBytes());
+						o.write("brmGPS\n".getBytes());
 						o.flush();
 						if (clientSocket != null) {
 							try {
@@ -153,6 +156,52 @@ public class GPSService extends Service {
 
 	}
 	
+	public String getCurrentCellInfo() {
+        int cid, lac;
+        String cidStr, lacStr;
+
+TelephonyManager mTelephonyMgr = (TelephonyManager) getSystemService(Context.TELEPHONY_SERVICE);
+
+try{
+		switch (mTelephonyMgr.getPhoneType()){
+        case TelephonyManager.PHONE_TYPE_CDMA:
+            cidStr = "BID: " + " ";
+            lacStr = "NID: " + " ";
+            CdmaCellLocation locCdma = (CdmaCellLocation) mTelephonyMgr.getCellLocation();
+            cid = locCdma.getBaseStationId();
+            lac = locCdma.getNetworkId();
+            break;
+        default:
+            cidStr = "CID: " + " ";
+            lacStr = "LAC: " + " ";
+            GsmCellLocation locGsm = (GsmCellLocation) mTelephonyMgr.getCellLocation();
+            cid = locGsm.getCid();
+            lac = locGsm.getLac();
+            break;
+        }
+
+        if (cid == -1){
+            cidStr += "UNKNOWN: ";
+        } else {
+            cidStr += cid;
+            //cidStr += Integer.toHexString(cid);
+        }
+
+        if (lac == -1){
+            lacStr += "UNKNOWN: ";
+        } else {
+            lacStr += lac;
+            //lacStr += Integer.toHexString(lac);
+        }
+
+        return cidStr + " " + lacStr + " " + "RSSI: ";
+
+    } catch (Exception e) {
+        Log.e(TAG, "^ getCurrentCellId(): " + e.toString());
+        return null;
+    }
+
+}
 	@Override
 	public void onStart(Intent intent, int startid) {
 		Log.d(TAG, "onStart");
@@ -196,7 +245,7 @@ public class GPSService extends Service {
 								float speed = lastKnownLocation.getSpeed();
 								float acc = lastKnownLocation.getAccuracy();
 								long sats = lastKnownLocation.getExtras().getLong("satellites");
-								line+="<lat>" + lat + "</lat><lon>" + lon + "</lon><alt>" + alt + "</alt><speed>" + speed + "</speed><acc>" + acc + "</acc><sats>"+sats+"</sats>";    
+								line+="<lat>" + lat + "</lat><lon>" + lon + "</lon><alt>" + alt + "</alt><speed>" + speed + "</speed><acc>" + acc + "</acc><sats>"+sats+"</sats><cid>"+getCurrentCellInfo()+"</cid>";    
 							}else{
 								line+="GPS:MISSINGINFO";
 							}
