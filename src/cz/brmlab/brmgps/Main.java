@@ -89,7 +89,7 @@ public class Main extends Activity implements OnClickListener {
   public void onClick(View src) {
     switch (src.getId()) {
     case R.id.buttonStart:
-    sendnotification("brmGPS is active","brmGPS is active at 0.0.0.0:5000");  
+    sendnotification("brmGPS is active","brmGPS is active at 0.0.0.0:5000-5002");  
     Log.d(TAG, "onClick: starting srvice");
       
       LocationManager locationMgr = (LocationManager) getSystemService(Context.LOCATION_SERVICE);

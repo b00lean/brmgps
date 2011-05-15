@@ -2,8 +2,13 @@ package cz.brmlab.brmgps;
 
 import java.io.IOException;
 import java.io.OutputStream;
+import java.net.InetAddress;
+import java.net.NetworkInterface;
 import java.net.ServerSocket;
 import java.net.Socket;
+import java.net.SocketException;
+import java.util.Enumeration;
+import java.util.LinkedList;
 import java.util.List;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
@@ -28,11 +33,19 @@ import android.widget.Toast;
 
 @SuppressWarnings("deprecation")
 public class GPSService extends Service {
+	
+	private static final int PROTOCOL_CSV = 0;
+	private static final int PROTOCOL_XML = 1;
+	private static final int PROTOCOL_JSON = 2;
+	private static final int PROTOCOLS_COUNT = 3;
+	
 	private static final String TAG = "brmGPSService";
 	private ScheduledExecutorService scheduler;
-	private Thread listenerThread;
-	private ServerSocket serverSocket;
+	private List<Thread> listenerThreads;
+	private List<ServerSocket> serverSockets;
 	private Socket clientSocket;
+	private volatile int currentProtocol = PROTOCOL_CSV;
+	
 	private boolean shouldRun;
 	private SensorManager sensorMgr;
 	private LocationManager locationMgr; 
@@ -87,7 +100,7 @@ public class GPSService extends Service {
 	
 	@Override
 	public void onCreate() {
-		// Toast.makeText(this, "GPS Service Created", Toast.LENGTH_LONG).show(); ###################################
+		Toast.makeText(this, "GPS Service Started", Toast.LENGTH_LONG).show();
 		Log.d(TAG, "onCreate");
 		
         sensorMgr = (SensorManager)getSystemService(Context.SENSOR_SERVICE);
@@ -95,55 +108,82 @@ public class GPSService extends Service {
 		
 		scheduler = Executors.newScheduledThreadPool(1);
 	
-		listenerThread = new Thread(new Runnable(){
-			@Override
-			public void run() {
-				try {
-					do {
-						Socket s = serverSocket.accept();
-						OutputStream o = s.getOutputStream();
-						o.write("brmGPS\n".getBytes());
-						o.flush();
-						if (clientSocket != null) {
-							try {
-								clientSocket.close();
-							} catch (Exception e) {
-								e.printStackTrace();
-							}
-						}
-						clientSocket = s;
-					}while(shouldRun);
-					
-				} catch (Exception e) {
-					e.printStackTrace();
-				}
-			}
+		listenerThreads = new LinkedList<Thread>();
+		serverSockets = new LinkedList<ServerSocket>();
+		for (int i = 0; i<PROTOCOLS_COUNT; i++) {
 			
-		});
+			final int protocolIndex = i;
+			Thread listenerThread = new Thread(new Runnable(){
+				@Override
+				public void run() {
+					try {
+						do {
+							Socket s = serverSockets.get(protocolIndex).accept();
+							currentProtocol = protocolIndex;
+							OutputStream o = s.getOutputStream();
+							
+							if (currentProtocol == PROTOCOL_JSON) {
+								o.write("{\"protocol\":\"brmGPS\",\"version\":2}\n".getBytes());
+							}else{
+								o.write("brmGPS\n".getBytes());
+							}
+							o.flush();
+							if (clientSocket != null) {
+								try {
+									clientSocket.close();
+								} catch (Exception e) {
+									e.printStackTrace();
+								}
+							}
+							clientSocket = s;
+						}while(shouldRun);
+						
+					} catch (Exception e) {
+						e.printStackTrace();
+					}
+				}
+			});
+			listenerThreads.add(listenerThread);
+		}
 	}
 
 	@Override
 	public void onDestroy() {
-		//Toast.makeText(this, "GPS Service Stopped", Toast.LENGTH_LONG).show(); ###################################
+		Toast.makeText(this, "GPS Service Stopped", Toast.LENGTH_LONG).show(); 
 		Log.d(TAG, "onDestroy");
 		shouldRun = false;
-		listenerThread.interrupt();
+		
 		sensorMgr.unregisterListener(mListener);
 		locationMgr.removeUpdates(lListener);
 		if (wl != null) {
 			wl.release();
 			wl = null;
 		}
-		if (serverSocket != null) {
-			try {
-				serverSocket.close();
-				
-			} catch (IOException e) {
-				e.printStackTrace();
-			}finally {
-				serverSocket = null;
+
+		for (int i = 0; i<PROTOCOLS_COUNT; i++) {
+			Thread listenerThread = listenerThreads.get(i);
+			if (listenerThread != null) {
+				listenerThread.interrupt();
+			}
+
+			if (i < serverSockets.size()) {
+				ServerSocket serverSocket = serverSockets.get(i);
+	
+				if (serverSocket != null) {
+					try {
+						serverSocket.close();
+						
+					} catch (IOException e) {
+						e.printStackTrace();
+					}finally {
+						serverSocket = null;
+					}
+				}
 			}
 		}
+		
+		listenerThreads.clear();
+		serverSockets.clear();
 		if (clientSocket != null) {
 			try {
 				clientSocket.close();
@@ -160,48 +200,67 @@ public class GPSService extends Service {
         int cid, lac;
         String cidStr, lacStr;
 
-TelephonyManager mTelephonyMgr = (TelephonyManager) getSystemService(Context.TELEPHONY_SERVICE);
+		TelephonyManager mTelephonyMgr = (TelephonyManager) getSystemService(Context.TELEPHONY_SERVICE);
+		
+		try{
+			switch (mTelephonyMgr.getPhoneType()){
+	        case TelephonyManager.PHONE_TYPE_CDMA:
+	            cidStr = "BID: " + " ";
+	            lacStr = "NID: " + " ";
+	            CdmaCellLocation locCdma = (CdmaCellLocation) mTelephonyMgr.getCellLocation();
+	            cid = locCdma.getBaseStationId();
+	            lac = locCdma.getNetworkId();
+	            break;
+	        default:
+	            cidStr = "CID: " + " ";
+	            lacStr = "LAC: " + " ";
+	            GsmCellLocation locGsm = (GsmCellLocation) mTelephonyMgr.getCellLocation();
+	            cid = locGsm.getCid();
+	            lac = locGsm.getLac();
+	            break;
+	        }
+	
+	        if (cid == -1){
+	            cidStr += "UNKNOWN: ";
+	        } else {
+	            cidStr += cid;
+	            //cidStr += Integer.toHexString(cid);
+	        }
+	
+	        if (lac == -1){
+	            lacStr += "UNKNOWN: ";
+	        } else {
+	            lacStr += lac;
+	            //lacStr += Integer.toHexString(lac);
+	        }
+	
+	        return cidStr + " " + lacStr + " " + "RSSI: ";
+		
+	    } catch (Exception e) {
+	        Log.e(TAG, "^ getCurrentCellId(): " + e.toString());
+	        return null;
+	    }
+		
+	}
+	
+	
+	private String getLocalIpAddress() {
+	    try {
+	        for (Enumeration<NetworkInterface> en = NetworkInterface.getNetworkInterfaces(); en.hasMoreElements();) {
+	            NetworkInterface intf = en.nextElement();
+	            for (Enumeration<InetAddress> enumIpAddr = intf.getInetAddresses(); enumIpAddr.hasMoreElements();) {
+	                InetAddress inetAddress = enumIpAddr.nextElement();
+	                if (!inetAddress.isLoopbackAddress()) {
+	                    return inetAddress.getHostAddress().toString();
+	                }
+	            }
+	        }
+	    } catch (SocketException ex) {
+	        ex.printStackTrace();
+	    }
+	    return null;
+	}
 
-try{
-		switch (mTelephonyMgr.getPhoneType()){
-        case TelephonyManager.PHONE_TYPE_CDMA:
-            cidStr = "BID: " + " ";
-            lacStr = "NID: " + " ";
-            CdmaCellLocation locCdma = (CdmaCellLocation) mTelephonyMgr.getCellLocation();
-            cid = locCdma.getBaseStationId();
-            lac = locCdma.getNetworkId();
-            break;
-        default:
-            cidStr = "CID: " + " ";
-            lacStr = "LAC: " + " ";
-            GsmCellLocation locGsm = (GsmCellLocation) mTelephonyMgr.getCellLocation();
-            cid = locGsm.getCid();
-            lac = locGsm.getLac();
-            break;
-        }
-
-        if (cid == -1){
-            cidStr += "UNKNOWN: ";
-        } else {
-            cidStr += cid;
-            //cidStr += Integer.toHexString(cid);
-        }
-
-        if (lac == -1){
-            lacStr += "UNKNOWN: ";
-        } else {
-            lacStr += lac;
-            //lacStr += Integer.toHexString(lac);
-        }
-
-        return cidStr + " " + lacStr + " " + "RSSI: ";
-
-    } catch (Exception e) {
-        Log.e(TAG, "^ getCurrentCellId(): " + e.toString());
-        return null;
-    }
-
-}
 	@Override
 	public void onStart(Intent intent, int startid) {
 		Log.d(TAG, "onStart");
@@ -216,40 +275,31 @@ try{
 
 			sensorMgr.registerListener(mListener, SensorManager.SENSOR_ORIENTATION, SensorManager.SENSOR_DELAY_GAME);
 			locationMgr.requestLocationUpdates(LocationManager.GPS_PROVIDER , 1l, 1l, lListener); // GPS_PROVIDER
-			locationMgr.requestLocationUpdates(LocationManager.NETWORK_PROVIDER , 1l, 1l, lListener); // NETWORK_PROVIDER
+			//locationMgr.requestLocationUpdates(LocationManager.NETWORK_PROVIDER , 1l, 1l, lListener); // NETWORK_PROVIDER
 			powerMgr = (PowerManager) getSystemService(Context.POWER_SERVICE);
 			wl = powerMgr.newWakeLock(PowerManager.FULL_WAKE_LOCK, "brmGPS");
 			wl.acquire();
-			try {
-				serverSocket = new ServerSocket(5000);
-				//Toast.makeText(this, "GPS Service Started " + serverSocket.getLocalSocketAddress(), Toast.LENGTH_LONG).show(); ###################################
-			} catch (IOException e1) {
-				e1.printStackTrace();
+			
+			for (int i = 0; i<PROTOCOLS_COUNT; i++) {
+				Thread listenerThread = listenerThreads.get(i);
+				try {
+					ServerSocket serverSocket = new ServerSocket(5000+i);
+					serverSockets.add(serverSocket);
+					Toast.makeText(this, "Listening on " + getLocalIpAddress() + ":" + serverSocket.getLocalPort(), Toast.LENGTH_SHORT).show(); 
+				} catch (IOException e1) {
+					e1.printStackTrace();
+				}
+				listenerThread.start();
 			}
-			listenerThread.start();
 			scheduler.scheduleAtFixedRate(new Runnable() {
 				@Override
 				public void run() {
 					if (clientSocket != null) {
 						try {
-							String line ="";
+							
 							OutputStream os = clientSocket.getOutputStream();
-							if (mValues != null) {
-								line +="<compass>" + mValues[0] +"</compass><pitch>"+mValues[1]+"</pitch><roll>"+mValues[2]+"</roll>";
-							}
-
-							if (lastKnownLocation != null) {
-								double lat = lastKnownLocation.getLatitude();
-								double lon = lastKnownLocation.getLongitude();
-								double alt = lastKnownLocation.getAltitude();
-								float speed = lastKnownLocation.getSpeed();
-								float acc = lastKnownLocation.getAccuracy();
-								long sats = lastKnownLocation.getExtras().getLong("satellites");
-								line+="<lat>" + lat + "</lat><lon>" + lon + "</lon><alt>" + alt + "</alt><speed>" + speed + "</speed><acc>" + acc + "</acc><sats>"+sats+"</sats><cid>"+getCurrentCellInfo()+"</cid>";    
-							}else{
-								line+="GPS:MISSINGINFO";
-							}
-							line+="\n";
+							
+							String line = buildLine(currentProtocol);
 							Log.d(TAG, line);
 							os.write(line.getBytes());
 							os.flush();
@@ -264,6 +314,77 @@ try{
 		}else{
 			Toast.makeText(this, "GPS Service already started", Toast.LENGTH_LONG).show();
 		}
+	}
+
+	private String buildLine(int protocol) {
+		
+		String line ="";
+		
+		switch (protocol) {
+			case PROTOCOL_XML:
+				if (mValues != null) {
+					line +="<compass>" + mValues[0] +"</compass><pitch>"+mValues[1]+"</pitch><roll>"+mValues[2]+"</roll>";
+				}
+		
+				if (lastKnownLocation != null) {
+					double lat = lastKnownLocation.getLatitude();
+					double lon = lastKnownLocation.getLongitude();
+					double alt = lastKnownLocation.getAltitude();
+					float speed = lastKnownLocation.getSpeed();
+					float acc = lastKnownLocation.getAccuracy();
+					long sats = lastKnownLocation.getExtras().getLong("satellites");
+					line+="<lat>" + lat + "</lat><lon>" + lon + "</lon><alt>" + alt + "</alt><speed>" + speed + "</speed><acc>" + acc + "</acc><sats>"+sats+"</sats><cid>"+getCurrentCellInfo()+"</cid>";    
+				}else{
+					line+="GPS:MISSINGINFO";
+				}
+				line+="\n";
+				break;
+			case PROTOCOL_CSV:
+                if (mValues != null) {
+                        line +="COMPAS:" + mValues[0] +"|";
+                }
+
+                if (lastKnownLocation != null) {
+                        double lat = lastKnownLocation.getLatitude();
+                        double lon = lastKnownLocation.getLongitude();
+                        double alt = lastKnownLocation.getAltitude();
+                        float speed = lastKnownLocation.getSpeed();
+                        float acc = lastKnownLocation.getAccuracy();
+                        long sats = lastKnownLocation.getExtras().getLong("satellites");
+                        line+="GPS:" + lat + "|" + lon + "|" + alt + "|" + speed + "|" + acc+ "|" + sats;
+                }else{
+                        line+="GPS:MISSINGINFO";
+                }
+                line+="\n";
+
+				break;
+			case PROTOCOL_JSON:
+				String compas = null;
+                if (mValues != null) {
+                        compas = "\"az\":" + mValues[0];
+                }
+
+                if (lastKnownLocation != null) {
+                        double lat = lastKnownLocation.getLatitude();
+                        double lon = lastKnownLocation.getLongitude();
+                        double alt = lastKnownLocation.getAltitude();
+                        float speed = lastKnownLocation.getSpeed();
+                        float acc = lastKnownLocation.getAccuracy();
+                        long sats = lastKnownLocation.getExtras().getLong("satellites");
+                        double bearing = lastKnownLocation.getBearing();
+                        
+        				//{"epv":0.001,"lon":15.34566789,"epx":0.001,"class":"TPV","az":90.12345678,"epy":0.002,"time":1305382841.12346,"alt":212.12345678,"lat":50.12345678}
+                        long time = lastKnownLocation.getTime(); 
+                        line+="{\"lon\":" + lon+ ",\"class\":\"TPV\","+(compas == null ? "" : compas +"," )  +"\"time\":" + time +",\"alt\":" +  alt+",\"lat\":" + lat+",\"track\":" + bearing +",\"speed\":" + speed +",\"accurancy\":" + acc + ",\"satellites\": " + sats +"}";
+                }else{
+                		
+                        line+="{"+(compas == null ? "" : compas +"," ) +"\"gps\":\"MISSINGINFO\"}";
+                }
+                line+="\n";
+
+				break;
+		}
+		return line;
 	}
 	
 	
